@@ -1,7 +1,7 @@
 // Default-Export verwenden; nicht als { StreamingAvatar } importieren.
 import StreamingAvatar from "@heygen/streaming-avatar";
 
-// Fallback-Events, falls das SDK keine Named Exports liefert
+// Fallback-Events
 const StreamingEvents = {
   STREAM_READY: "STREAM_READY",
   AVATAR_START_TALKING: "AVATAR_START_TALKING",
@@ -19,8 +19,6 @@ const streamLbl = document.getElementById("streamLabel");
 
 let avatar;
 let sessionId;
-let recognition;      // Web Speech API
-let sttActive = false;
 
 // ====== Helfer ======
 function log(msg){ logEl.textContent += `${msg}\n`; logEl.scrollTop = logEl.scrollHeight; }
@@ -28,15 +26,18 @@ function setStreamStatus(kind){ // ok | busy | bad
   streamDot.classList.remove("status-ok","status-busy","status-bad");
   streamDot.classList.add(kind === "ok" ? "status-ok" : kind === "busy" ? "status-busy" : "status-bad");
 }
-async function fetchJSON(url, opts){ const r = await fetch(url, opts); if(!r.ok){ const t = await r.text(); throw new Error(t || r.statusText); } return r.json(); }
+async function fetchJSON(url, opts){ const r = await fetch(url, opts); const t = await r.text(); if(!r.ok){ throw new Error(t || r.statusText); } try { return JSON.parse(t); } catch { return t; } }
 
 // ====== Bootstrap: HeyGen verbinden ======
 (async function bootstrap(){
   try {
-    // 1) Kurzlebiges Token vom Server holen
-    const tok = await fetchJSON("/api/session-token", { method:"POST" });
+    // 1) Kurzlebiges Token vom Server holen (Server liefert { data: { token }, error: null })
+    const raw = await fetchJSON("/api/session-token", { method:"POST" });
+    const token = raw?.token || raw?.data?.token;   // <- WICHTIG: richtig extrahieren
+    if(!token) throw new Error("Kein Token erhalten. Antwort: " + JSON.stringify(raw));
+
     // 2) Avatar-Client initialisieren
-    avatar = new StreamingAvatar({ token: tok.token });
+    avatar = new StreamingAvatar({ token });
 
     // 3) Video-Stream anbinden
     avatar.on(StreamingEvents.STREAM_READY, (e) => {
@@ -45,18 +46,17 @@ async function fetchJSON(url, opts){ const r = await fetch(url, opts); if(!r.ok)
       streamLbl.textContent = "STREAM_READY – Avatar verbunden.";
       log("STREAM_READY");
     });
-
     avatar.on(StreamingEvents.AVATAR_START_TALKING, () => log("Avatar spricht..."));
     avatar.on(StreamingEvents.AVATAR_STOP_TALKING, () => log("Avatar stoppt."));
 
     setStreamStatus("busy");
     streamLbl.textContent = "Verbinde Avatar…";
 
-    // 4) Session starten – Avatar anpassen, wenn du einen konkreten Namen hast
+    // 4) Session starten – bei Bedarf avatarName anpassen (z. B. "lily")
     const newSess = await avatar.newSession({
-      avatarName: "default",  // TODO: hier echten Interactive-Avatar-Namen eintragen, z. B. "lily"
+      avatarName: "default",
       quality: "high"
-      // voice: "de-DE" // optional: konkrete Stimme wählen
+      // voice: "de-DE"
     });
     sessionId = newSess?.session_id || avatar.sessionId;
     log(`Session: ${sessionId}`);
@@ -92,43 +92,62 @@ async function sendAndSpeak(userText){
     askBtn.disabled = false; pttBtn.disabled = false;
   }
 }
-
-// Button: Text senden
 askBtn.addEventListener("click", () => sendAndSpeak(inputEl.value));
 
-// ====== Speech-to-Speech (Push-to-Talk) ======
-// Für Anfängerfreundlichkeit setzen wir auf die Web Speech API (Chrome/Edge). Safari/Firefox können zicken.
+// ====== Speech-to-Speech: bis 60 Sekunden am Stück ======
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition;
+let sttTimer;
+let sttActive = false;
+
 if (SR) {
   recognition = new SR();
   recognition.lang = "de-DE";
   recognition.interimResults = true;
+  recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
-  recognition.onstart  = () => { sttActive = true; pttBtn.textContent = "⏹️ Stop"; log("STT: Aufnahme gestartet…"); };
+  let buffer = "";
+
+  recognition.onstart  = () => {
+    buffer = "";
+    sttActive = true;
+    pttBtn.textContent = "⏹️ Aufnahme stoppen";
+    document.getElementById("sttState").textContent = "aufnehmen…";
+    log("STT: Aufnahme gestartet (max. 60s) …");
+
+    clearTimeout(sttTimer);
+    sttTimer = setTimeout(() => {
+      log("STT: 60s erreicht – stoppe.");
+      recognition.stop();
+    }, 60000);
+  };
+
   recognition.onerror  = e  => { log(`STT Fehler: ${e.error}`); };
-  recognition.onend    = () => { sttActive = false; pttBtn.textContent = "🎙️ Push-to-Talk"; document.getElementById("sttState").textContent = "inaktiv"; };
-  recognition.onresult = async (e) => {
-    let transcript = "";
-    for (const res of e.results) { transcript += res[0].transcript + " "; }
-    inputEl.value = transcript.trim();
-    document.getElementById("sttState").textContent = "erkannt";
-    // Wenn Ergebnis final, direkt senden
-    if (e.results[e.results.length - 1].isFinal) {
-      await sendAndSpeak(inputEl.value);
-    }
+  recognition.onresult = (e) => {
+    let latest = "";
+    for (const res of e.results) latest += res[0].transcript + " ";
+    inputEl.value = latest.trim();
+    buffer = latest.trim();
+  };
+
+  recognition.onend    = async () => {
+    clearTimeout(sttTimer);
+    sttActive = false;
+    pttBtn.textContent = "🎙️ Push-to-Talk";
+    document.getElementById("sttState").textContent = "inaktiv";
+    if (buffer) await sendAndSpeak(buffer);  // erst am Ende senden
   };
 
   pttBtn.addEventListener("click", () => {
     if (!sttActive) {
-      try { recognition.start(); document.getElementById("sttState").textContent = "aufnehmen…"; }
+      try { recognition.start(); }
       catch(e){ log(`STT Startfehler: ${e.message || e}`); }
     } else {
       recognition.stop();
     }
   });
 } else {
-  // Kein STT verfügbar: Knopf deaktivieren, damit du nicht drauf rumhämmers
   pttBtn.disabled = true;
   document.getElementById("sttState").textContent = "nicht unterstützt";
   log("Hinweis: Dein Browser unterstützt die Web Speech API nicht. Textfeld nutzen oder auf Chrome/Edge wechseln.");
