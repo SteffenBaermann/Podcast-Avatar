@@ -5,20 +5,31 @@
   <title>Podcast mit Avatar</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: system-ui, sans-serif; margin: 20px; }
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; }
     #wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-    video { width: 100%; background:#000; border-radius: 12px; }
+    @media (max-width: 900px){ #wrap { grid-template-columns: 1fr; } }
+    video { width: 100%; background:#000; border-radius: 12px; aspect-ratio: 16/9; }
     .card { padding: 12px; border: 1px solid #ddd; border-radius: 12px; }
-    button { padding: 10px 14px; cursor: pointer; }
+    button { padding: 10px 14px; cursor: pointer; border-radius: 10px; border: 1px solid #ccc; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .muted { opacity: .7; font-size: .9rem; }
+    #log { margin-top:12px; white-space:pre-wrap; background: #f6f6f6; border-radius: 8px; padding: 8px; min-height: 60px; }
+    textarea { width: 100%; }
+    .pill { padding: 4px 8px; border-radius: 999px; border: 1px solid #ddd; font-size: .9rem; }
+    .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; background:#999; vertical-align:middle; }
+    .status-ok { background:#12b886; }
+    .status-busy { background:#f59f00; }
+    .status-bad { background:#fa5252; }
   </style>
 
-  <!-- SDK ohne Build via Import Map laden -->
+  <!-- Import Map: stabil über esm.sh laden -->
   <script type="importmap">
-    {
-      "imports": {
-        "@heygen/streaming-avatar": "https://esm.sh/@heygen/streaming-avatar"
-      }
+  {
+    "imports": {
+      "@heygen/streaming-avatar": "https://esm.sh/@heygen/streaming-avatar?bundle"
     }
+  }
   </script>
 </head>
 <body>
@@ -27,14 +38,23 @@
     <div class="card">
       <h3>Avatar</h3>
       <video id="avatarVideo" autoplay playsinline muted></video>
+      <div class="muted" style="margin-top:8px;">
+        <span class="status-dot" id="streamDot"></span><span id="streamLabel">Warte auf STREAM_READY…</span>
+      </div>
     </div>
+
     <div class="card">
       <h3>Frage senden</h3>
-      <textarea id="input" rows="5" style="width:100%;" placeholder="Deine Frage oder Aussage..."></textarea>
-      <div style="margin-top:10px;">
+      <textarea id="input" rows="5" placeholder="Deine Frage oder Aussage..."></textarea>
+      <div class="row" style="margin-top:10px;">
         <button id="askBtn">Senden & sprechen</button>
+        <button id="pttBtn" title="Drücken um zu sprechen (Push-to-Talk)">🎙️ Push-to-Talk</button>
+        <span class="pill muted">Spracheingabe: <span id="sttState">inaktiv</span></span>
       </div>
-      <pre id="log" style="margin-top:12px; white-space:pre-wrap;"></pre>
+      <div id="log"></div>
+      <div class="muted" style="margin-top:8px;">
+        Tipp: Kurze Sätze. Avatar-Antworten dauern sonst ewig.
+      </div>
     </div>
   </div>
 
